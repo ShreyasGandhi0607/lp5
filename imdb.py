@@ -1,90 +1,74 @@
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from keras.datasets import imdb
-from keras import models, layers
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from keras.preprocessing.sequence import pad_sequences
+from keras.models import Sequential
+from keras.layers import Embedding, LSTM, Dense, Dropout
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import tensorflow as tf
 
-# Load IMDB dataset (top 10,000 most frequent words)
-(X_train, y_train), (X_test, y_test) = imdb.load_data(num_words=10000)
+# Check GPU
+print("Num GPUs Available:", len(tf.config.list_physical_devices('GPU')))
 
-# Merge train and test for shuffling and re-splitting
-data = np.concatenate((X_train, X_test), axis=0)
-labels = np.concatenate((y_train, y_test), axis=0)
+# Load dataset
+vocab_size = 10000
+max_length = 300  # restrict review length to 300 words
+(X_train, y_train), (X_test, y_test) = imdb.load_data(num_words=vocab_size)
 
-# One-hot encoding of the reviews
-def vectorize(sequences, dimension=10000):
-    results = np.zeros((len(sequences), dimension))
-    for i, sequence in enumerate(sequences):
-        results[i, sequence] = 1
-    return results
+# Pad sequences to same length
+X_train = pad_sequences(X_train, maxlen=max_length)
+X_test = pad_sequences(X_test, maxlen=max_length)
 
-data = vectorize(data)
-labels = labels.astype("float32")
+print("Train shape:", X_train.shape)
+print("Test shape:", X_test.shape)
 
-# Train-test split
-X_train, X_test, y_train, y_test = train_test_split(data, labels, test_size=0.2, random_state=1)
-
-# Basic EDA (optional but insightful)
-print("Number of categories:", np.unique(labels))
-print("Number of unique words:", len(np.unique(np.hstack([x for x in imdb.load_data(num_words=10000)[0][0]]))))
-review_lengths = [len(x) for x in imdb.load_data(num_words=10000)[0][0]]
-print("Avg. review length:", np.mean(review_lengths))
-
-# Visualizing class distribution
-sns.set(color_codes=True)
-sns.countplot(x=pd.Series(labels).map(int))
-plt.title("Distribution of Labels")
-plt.show()
-
-# Model definition
-model = models.Sequential([
-    layers.Dense(50, activation="relu", input_shape=(10000,)),
-    layers.Dropout(0.3),
-    layers.Dense(50, activation="relu"),
-    layers.Dropout(0.2),
-    layers.Dense(50, activation="relu"),
-    layers.Dense(1, activation="sigmoid")
+model = Sequential([
+    Embedding(input_dim=vocab_size, output_dim=128, input_length=max_length),
+    LSTM(64, return_sequences=False),
+    Dropout(0.3),
+    Dense(64, activation='relu'),
+    Dropout(0.3),
+    Dense(1, activation='sigmoid')
 ])
 
 model.summary()
 
-# Early stopping to prevent overfitting
-early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3)
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
-# Compile the model
-model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
 
-# Train the model
 history = model.fit(
     X_train, y_train,
-    epochs=10,  # Increased for better learning
-    batch_size=500,
+    epochs=10,
+    batch_size=256,
     validation_data=(X_test, y_test),
-    callbacks=[early_stopping]
+    callbacks=[early_stop],
+    verbose=1
 )
 
-# Evaluate the model
-predictions = (model.predict(X_test) > 0.5).astype("int32")
-print("Test Accuracy:", accuracy_score(y_test, predictions))
+# Predict
+preds = (model.predict(X_test) > 0.5).astype("int32")
 
-# Plot accuracy
-plt.plot(history.history['accuracy'], label='Train Accuracy')
-plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
-plt.title('Model Accuracy')
-plt.xlabel('Epoch')
-plt.ylabel('Accuracy')
-plt.legend()
+# Accuracy
+print("Test Accuracy:", accuracy_score(y_test, preds))
+print(classification_report(y_test, preds))
+
+# Confusion Matrix
+sns.heatmap(confusion_matrix(y_test, preds), annot=True, fmt='d', cmap='Blues')
+plt.title("Confusion Matrix")
 plt.show()
 
-# Plot loss
-plt.plot(history.history['loss'], label='Train Loss')
-plt.plot(history.history['val_loss'], label='Validation Loss')
-plt.title('Model Loss')
-plt.xlabel('Epoch')
-plt.ylabel('Loss')
+# Accuracy and Loss plots
+plt.plot(history.history['accuracy'], label="Train Acc")
+plt.plot(history.history['val_accuracy'], label="Val Acc")
 plt.legend()
+plt.title("Accuracy")
 plt.show()
+
+plt.plot(history.history['loss'], label="Train Loss")
+plt.plot(history.history['val_loss'], label="Val Loss")
+plt.legend()
+plt.title("Loss")
+plt.show()
+
